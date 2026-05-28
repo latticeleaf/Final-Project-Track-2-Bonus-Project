@@ -22,17 +22,24 @@ It computes:
 
 Then it outputs a conservative joystick command for the low-level policy.
 
-The JSON parameters in `configs/starter_planner.json` control speed, lookahead,
-heading correction, lateral correction, and command limits.
+The JSON parameters in `configs/starter_planner.json` control the starter
+planner's speed, lookahead, heading correction, and lateral correction.
 
 All high-level methods must keep the same runtime interface:
 
 ```text
-own robot state + track geometry -> [vx_mps, vy_mps, yaw_rate_radps]
+5D track observation -> [vx_mps, vy_mps, yaw_rate_radps]
 ```
 
-The official evaluator clips commands to the envelope defined in
-`track_bonus/controller_interface.py`.
+The 5D track observation is:
+
+```text
+[lap_fraction, lateral_error_norm, boundary_margin_norm,
+ heading_error_rad, curvature_norm]
+```
+
+The official evaluator checks command shape and finite values, but does not
+clip or rescale commands.
 
 ## Is The High-Level Baseline Trained?
 

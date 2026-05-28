@@ -122,14 +122,18 @@ state =
 
 The high-level planner may use track-coordinate features such as:
 
-- robot global `x, y`
-- progress along the centerline
-- lap fraction
-- lateral error from centerline
-- distance to boundary
-- heading error relative to track tangent
-- local curvature
-- lookahead heading or curvature
+```text
+[
+  lap_fraction,
+  lateral_error_norm,
+  boundary_margin_norm,
+  heading_error_rad,
+  curvature_norm
+]
+```
+
+This compact vector is derived from the robot's current pose and the known
+track geometry. It is the recommended tournament-facing high-level input.
 
 The high-level output must be:
 
@@ -139,17 +143,9 @@ The high-level output must be:
 
 in the same command convention used by the low-level joystick policy.
 
-Official command limits:
-
-```text
-vx_mps:          [0.00, 1.50]
-vy_mps:          [-0.50, 0.50]
-yaw_rate_radps:  [-1.50, 1.50]
-```
-
-The evaluator clips commands to this range and rejects non-finite or
-wrong-shaped commands. The high-level controller may use only the current
-robot's own state and track geometry; it may not read other robots' states or
+The evaluator rejects non-finite or wrong-shaped commands, but it does not clip
+or rescale command values. The high-level controller may use only the current
+robot's own compact track observation; it may not read other robots' states or
 future rollout information.
 
 ## 6. Starter Commands

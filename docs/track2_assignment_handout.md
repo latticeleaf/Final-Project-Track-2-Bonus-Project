@@ -132,10 +132,12 @@ Acceptable high-level approaches include:
 
 All approaches must obey the same controller interface:
 
-- input is the robot's own pose/state plus track geometry features
+- input is the compact 5D track observation:
+  `[lap_fraction, lateral_error_norm, boundary_margin_norm, heading_error_rad,
+  curvature_norm]`
 - output is exactly `[vx_mps, vy_mps, yaw_rate_radps]`
-- official command limits are `[0.00, 1.50]`, `[-0.50, 0.50]`, and
-  `[-1.50, 1.50]`
+- the evaluator checks output shape and finite values, but does not clip or
+  rescale commands
 - the controller cannot depend on other robots, future states, or hidden
   simulator internals
 

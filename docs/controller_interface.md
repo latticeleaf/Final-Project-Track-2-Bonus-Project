@@ -9,7 +9,7 @@ Each tournament entry has two layers:
 
 ```text
 high-level track controller:
-  own robot state + track geometry -> [vx, vy, yaw_rate]
+  5D track-coordinate observation -> [vx, vy, yaw_rate]
 
 low-level Go2 locomotion policy:
   proprioception + command -> 12 joint actions
@@ -22,22 +22,28 @@ also avoids Python dependency conflicts between teams.
 
 ## 2. High-Level Input
 
-The high-level controller may use only the current robot's own state and track
-geometry. The standardized observation fields are:
+The high-level controller should use the compact 5D track-coordinate
+observation:
 
-- `t`: rollout time in seconds.
-- `qpos`: current 19-dimensional MuJoCo generalized position for this robot.
-- `base_xy`: global base position `[x, y]`.
-- `base_yaw`: global heading angle.
-- `centerline_s_m`: projected progress along the 200 m centerline.
-- `lap_fraction`: `centerline_s_m / 200`.
-- `lateral_error_m`: signed distance from the centerline.
-- `boundary_margin_m`: distance to the nearest lane boundary.
-- `track_heading_rad`: tangent direction of the centerline.
-- `heading_error_rad`: track heading minus robot yaw.
-- `curvature_1pm`: local centerline curvature.
-- `track_length_m`: default `200.0`.
-- `track_half_width_m`: default `2.0`.
+```text
+[
+  lap_fraction,
+  lateral_error_norm,
+  boundary_margin_norm,
+  heading_error_rad,
+  curvature_norm
+]
+```
+
+Feature definitions:
+
+- `lap_fraction`: projected progress along the 200 m centerline, divided by
+  track length.
+- `lateral_error_norm`: signed centerline error divided by track half-width.
+- `boundary_margin_norm`: distance to the nearest boundary divided by track
+  half-width. It becomes negative outside the lane.
+- `heading_error_rad`: track tangent heading minus robot yaw.
+- `curvature_norm`: local centerline curvature multiplied by turn radius.
 
 The helper implementation is in:
 
@@ -46,8 +52,10 @@ track_bonus/controller_interface.py
 ```
 
 Students may compute the same features themselves, but the controller should
-not depend on other robots, future states, hidden simulator internals, or
-manually edited evaluator outputs.
+not depend on other robots, future states, hidden simulator internals, raw
+privileged simulator state, or manually edited evaluator outputs. The compact
+feature vector is deliberately smaller than full `qpos` so tournament entries
+stay comparable.
 
 ## 3. High-Level Output
 
@@ -59,16 +67,10 @@ The output must be exactly:
 
 with shape `(3,)`.
 
-The official evaluator sanitizes commands with:
-
-```text
-vx_mps:          [0.00, 1.50]
-vy_mps:          [-0.50, 0.50]
-yaw_rate_radps:  [-1.50, 1.50]
-```
-
-Non-finite commands or wrong-shaped commands are invalid. Commands outside the
-range are clipped before they reach the low-level policy.
+The official evaluator checks only shape and finite values. It does not clip or
+rescale commands. If a controller outputs commands that are too aggressive for
+the low-level policy, the resulting fall or boundary violation is part of the
+score.
 
 ## 4. Low-Level Policy Requirement
 

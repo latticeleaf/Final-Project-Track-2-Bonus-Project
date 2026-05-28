@@ -1,7 +1,9 @@
 """Starter high-level planner for the 200 m track bonus.
 
-The planner maps global track geometry and the robot pose to the local
-joystick command consumed by the HW1 Go2 locomotion policy:
+The evaluator passes `qpos` to this wrapper so the starter can construct track
+features internally. The student-facing tournament contract is the compact 5D
+track observation defined in `track_bonus/controller_interface.py`, mapped to
+the local joystick command consumed by the HW1 Go2 locomotion policy:
 
     qpos + track -> [vx, vy, yaw_rate]
 

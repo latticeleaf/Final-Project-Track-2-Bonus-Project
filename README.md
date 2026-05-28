@@ -130,25 +130,18 @@ high-level controller interface is fixed:
 
 ```text
 input:
-  own robot qpos, base xy/yaw, track progress, lateral error,
-  boundary margin, heading error, curvature, and time
+  [lap_fraction, lateral_error_norm, boundary_margin_norm,
+   heading_error_rad, curvature_norm]
 
 output:
   [vx_mps, vy_mps, yaw_rate_radps]
 ```
 
-Official command limits:
-
-```text
-vx_mps:          [0.00, 1.50]
-vy_mps:          [-0.50, 0.50]
-yaw_rate_radps:  [-1.50, 1.50]
-```
-
-Commands are clipped by `track_bonus/controller_interface.py`. The high-level
-controller must not depend on other robots, future states, hidden simulator
-internals, or manually edited evaluator outputs. The low-level checkpoint must
-remain a Brax PPO checkpoint with actor `policy_obs_key = "state"`.
+The evaluator checks command shape and finite values but does not clip or
+rescale commands. The high-level controller must not depend on other robots,
+future states, hidden simulator internals, or manually edited evaluator
+outputs. The low-level checkpoint must remain a Brax PPO checkpoint with actor
+`policy_obs_key = "state"`.
 
 For the full contract, read:
 
