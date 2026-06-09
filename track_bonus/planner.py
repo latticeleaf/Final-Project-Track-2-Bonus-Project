@@ -1,13 +1,11 @@
-"""Starter high-level planner for the 200 m track bonus.
+"""Learned MLP high-level planner for the 200 m track bonus.
 
-The evaluator builds the official compact 5D track observation defined in
-`track_bonus/controller_interface.py`. The high-level planner maps it to the
-local joystick command consumed by the HW1 Go2 locomotion policy:
+Replaces the hand-written PD baseline with a small neural network:
+    5D track observation -> MLP(theta) -> [vx, vy, yaw_rate]
 
-    5D track observation -> [vx, vy, yaw_rate]
-
-This file is intentionally small.  It is a weak baseline and an interface
-example, not a solved full-lap controller.
+Weights are stored in a .npz file and loaded via StarterTrackPlanner.load().
+The entry points (StarterTrackPlanner.load, planner.command) are unchanged
+so the evaluator works without modification.
 """
 
 from __future__ import annotations
@@ -25,17 +23,23 @@ from track_bonus.controller_interface import TrackControllerObservation
 from track_bonus.official_track import official_track
 
 
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
 @dataclass(frozen=True)
 class StarterPlannerConfig:
-    planner_type: str = "starter_pd"
-    speed_mps: float = 0.45
-    min_speed_mps: float = 0.12
+    planner_type: str = "mlp"
+    speed_mps: float = 1.5          # max forward speed
+    min_speed_mps: float = 0.6
     max_lateral_speed_mps: float = 0.08
-    max_yaw_rate_radps: float = 0.25
-    k_heading: float = 0.55
+    max_yaw_rate_radps: float = 0.65
+    k_heading: float = 1.2
     k_lateral: float = 0.08
     heading_slowdown: float = 0.45
     stand_seconds: float = 1.0
+    weights_path: str = ""          # path to .npz weights, relative to planner.py
+    hidden_size: int = 32
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "StarterPlannerConfig":
@@ -48,36 +52,111 @@ class StarterPlannerConfig:
         return cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "planner_type": self.planner_type,
-            "speed_mps": self.speed_mps,
-            "min_speed_mps": self.min_speed_mps,
-            "max_lateral_speed_mps": self.max_lateral_speed_mps,
-            "max_yaw_rate_radps": self.max_yaw_rate_radps,
-            "k_heading": self.k_heading,
-            "k_lateral": self.k_lateral,
-            "heading_slowdown": self.heading_slowdown,
-            "stand_seconds": self.stand_seconds,
-        }
+        return {f: getattr(self, f) for f in self.__dataclass_fields__}
 
+
+# ---------------------------------------------------------------------------
+# Tiny MLP (numpy only, no framework dependency at inference)
+# ---------------------------------------------------------------------------
+
+class MLPPolicy:
+    """Two-hidden-layer MLP: 5 -> H -> H -> 3, tanh activations."""
+
+    def __init__(self, weights: dict[str, np.ndarray]) -> None:
+        self.W1 = weights["W1"]   # (H, 5)
+        self.b1 = weights["b1"]   # (H,)
+        self.W2 = weights["W2"]   # (H, H)
+        self.b2 = weights["b2"]   # (H,)
+        self.W3 = weights["W3"]   # (3, H)
+        self.b3 = weights["b3"]   # (3,)
+
+    def forward(self, x: np.ndarray) -> np.ndarray:
+        x = np.tanh(self.W1 @ x + self.b1)
+        x = np.tanh(self.W2 @ x + self.b2)
+        x = np.tanh(self.W3 @ x + self.b3)
+        return x.astype(np.float32)
+
+    @classmethod
+    def random_init(cls, hidden_size: int = 32, seed: int = 0) -> "MLPPolicy":
+        rng = np.random.default_rng(seed)
+        scale = 0.3
+        weights = {
+            "W1": rng.normal(0, scale, (hidden_size, 5)),
+            "b1": np.zeros(hidden_size),
+            "W2": rng.normal(0, scale, (hidden_size, hidden_size)),
+            "b2": np.zeros(hidden_size),
+            "W3": rng.normal(0, scale, (3, hidden_size)),
+            "b3": np.zeros(3),
+        }
+        return cls(weights)
+
+    @classmethod
+    def load(cls, path: Path) -> "MLPPolicy":
+        data = np.load(path)
+        return cls({k: data[k] for k in data.files})
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(path, W1=self.W1, b1=self.b1,
+                 W2=self.W2, b2=self.b2,
+                 W3=self.W3, b3=self.b3)
+
+    def get_flat_params(self) -> np.ndarray:
+        return np.concatenate([
+            self.W1.ravel(), self.b1,
+            self.W2.ravel(), self.b2,
+            self.W3.ravel(), self.b3,
+        ])
+
+    @classmethod
+    def from_flat_params(cls, params: np.ndarray, hidden_size: int = 32) -> "MLPPolicy":
+        H = hidden_size
+        idx = 0
+        def take(shape):
+            nonlocal idx
+            n = int(np.prod(shape))
+            chunk = params[idx:idx+n].reshape(shape)
+            idx += n
+            return chunk
+        weights = {
+            "W1": take((H, 5)),
+            "b1": take((H,)),
+            "W2": take((H, H)),
+            "b2": take((H,)),
+            "W3": take((3, H)),
+            "b3": take((3,)),
+        }
+        return cls(weights)
+
+
+# ---------------------------------------------------------------------------
+# Planner
+# ---------------------------------------------------------------------------
 
 class StarterTrackPlanner:
-    """Conservative coordinate-to-command baseline.
+    """Learned MLP high-level planner.
 
-    The policy is deliberately simple and conservative. Students should improve
-    it by changing this controller, replacing it with an MLP, or training a
-    higher-level policy that produces the same command vector.
+    Maps the official 5D track observation to [vx, vy, yaw_rate].
+    Output is scaled by the config speed/rate limits so the MLP
+    only needs to learn a normalized [-1, 1] policy.
     """
 
-    def __init__(self, config: StarterPlannerConfig) -> None:
-        if config.planner_type != "starter_pd":
-            raise ValueError(f"Unsupported planner_type: {config.planner_type!r}")
+    def __init__(self, config: StarterPlannerConfig, mlp: MLPPolicy) -> None:
         self.config = config
+        self.mlp = mlp
         self.track: StandardOvalTrack = official_track()
 
     @classmethod
     def load(cls, path: Path) -> "StarterTrackPlanner":
-        return cls(StarterPlannerConfig.load(path))
+        config = StarterPlannerConfig.load(path)
+        if config.weights_path:
+            weights_path = path.parent / config.weights_path
+            if weights_path.exists():
+                mlp = MLPPolicy.load(weights_path)
+                return cls(config, mlp)
+        # No weights yet — use random init (will be trained by CEM)
+        mlp = MLPPolicy.random_init(hidden_size=config.hidden_size)
+        return cls(config, mlp)
 
     def command(self, obs: TrackControllerObservation, t: float) -> np.ndarray:
         if t < self.config.stand_seconds:
@@ -85,28 +164,14 @@ class StarterTrackPlanner:
         return self.command_from_observation(obs)
 
     def command_from_observation(self, obs: TrackControllerObservation) -> np.ndarray:
-        lateral_error = float(obs.lateral_error_norm) * float(self.track.half_width_m)
-        lateral_bias = math.atan2(
-            float(self.config.k_lateral) * lateral_error,
-            max(float(self.config.speed_mps), 1e-3),
-        )
-        heading_error = wrap_angle(float(obs.heading_error_rad) - lateral_bias)
+        x = obs.as_array()  # 5D input, already normalized by controller_interface
+        raw = self.mlp.forward(x)  # tanh output in [-1, 1]
 
-        speed_scale = 1.0 - float(self.config.heading_slowdown) * min(abs(heading_error), math.pi) / math.pi
-        vx = np.clip(
-            float(self.config.speed_mps) * speed_scale,
-            float(self.config.min_speed_mps),
-            float(self.config.speed_mps),
-        )
-        vy = np.clip(
-            -float(self.config.k_lateral) * lateral_error,
-            -float(self.config.max_lateral_speed_mps),
-            float(self.config.max_lateral_speed_mps),
-        )
-        curvature = float(obs.curvature_norm) / max(float(self.track.turn_radius_m), 1e-6)
-        yaw_rate = np.clip(
-            curvature * vx + float(self.config.k_heading) * heading_error,
-            -float(self.config.max_yaw_rate_radps),
-            float(self.config.max_yaw_rate_radps),
-        )
+        # Scale to physical limits
+        vx = float(self.config.min_speed_mps +
+                   (raw[0] * 0.5 + 0.5) *
+                   (self.config.speed_mps - self.config.min_speed_mps))
+        vy = float(raw[1]) * float(self.config.max_lateral_speed_mps)
+        yaw_rate = float(raw[2]) * float(self.config.max_yaw_rate_radps)
+
         return np.asarray([vx, vy, yaw_rate], dtype=np.float32)
