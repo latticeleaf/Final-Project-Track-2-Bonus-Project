@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""CEM (Cross-Entropy Method) trainer for the MLP high-level planner.
+ 
+Each iteration:
+  1. Sample a population of MLP weight vectors around the current mean.
+  2. Evaluate each by running a short track rollout.
+  3. Keep the top-k elite candidates.
+  4. Update mean/std from elites.
+  5. Save the best weights.
+ 
+Usage:
+    python train_highlevel_mlp.py \
+        --checkpoint-dir artifacts/run_baseline/best_checkpoint \
+        --output-dir artifacts/highlevel_mlp \
+        --iterations 20 \
+        --population 16 \
+        --eval-seconds 60
+"""
+ 
+from __future__ import annotations
+ 
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+ 
+import numpy as np
+ 
+ROOT = Path(__file__).resolve().parent
+ 
+# We need to import the MLP class -- add repo to path
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+ 
+from track_bonus.planner import MLPPolicy, StarterPlannerConfig
+ 
+ 
+HIDDEN_SIZE = 32
+ 
+ 
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--checkpoint-dir", type=Path, required=True)
+    p.add_argument("--config", type=Path, default=ROOT / "configs" / "colab_runtime_config.json")
+    p.add_argument("--output-dir", type=Path, required=True)
+    p.add_argument("--iterations", type=int, default=20)
+    p.add_argument("--population", type=int, default=16)
+    p.add_argument("--elite-frac", type=float, default=0.25)
+    p.add_argument("--eval-seconds", type=float, default=60.0)
+    p.add_argument("--sigma-init", type=float, default=0.5)
+    p.add_argument("--sigma-decay", type=float, default=0.92)
+    p.add_argument("--sigma-min", type=float, default=0.05)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--entry-name", type=str, default="mlp_cem")
+    return p.parse_args()
+ 
+ 
+def _param_count() -> int:
+    dummy = MLPPolicy.random_init(HIDDEN_SIZE)
+    return dummy.get_flat_params().shape[0]
+ 
+ 
+def _write_planner_config(output_dir: Path, weights_path: Path) -> Path:
+    cfg = StarterPlannerConfig(
+        planner_type="mlp",
+        speed_mps=1.5,
+        min_speed_mps=0.6,
+        max_lateral_speed_mps=0.08,
+        max_yaw_rate_radps=0.65,
+        k_heading=1.2,
+        k_lateral=0.08,
+        heading_slowdown=0.45,
+        stand_seconds=1.0,
+        weights_path=str(weights_path),
+        hidden_size=HIDDEN_SIZE,
+    )
+    cfg_path = output_dir / "planner_config.json"
+    cfg_path.write_text(json.dumps(cfg.to_dict(), indent=2))
+    return cfg_path
+ 
+ 
+def _eval_params(
+    params: np.ndarray,
+    *,
+    checkpoint_dir: Path,
+    config: Path,
+    output_dir: Path,
+    weights_path: Path,
+    eval_seconds: float,
+    entry_name: str,
+) -> float:
+    # Save weights
+    mlp = MLPPolicy.from_flat_params(params, HIDDEN_SIZE)
+    mlp.save(weights_path)
+ 
+    # Write planner config pointing to weights
+    planner_cfg = _write_planner_config(output_dir, weights_path)
+ 
+    cmd = [
+        sys.executable, "run_track_bonus.py",
+        "--checkpoint-dir", str(checkpoint_dir),
+        "--planner-config", str(planner_cfg),
+        "--config", str(config),
+        "--output-dir", str(output_dir / "eval"),
+        "--entry-name", entry_name,
+        "--duration-seconds", str(eval_seconds),
+        "--no-render",
+    ]
+    try:
+        subprocess.run(cmd, cwd=ROOT, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+        results = json.loads((output_dir / "eval" / "results.json").read_text())
+        scores = results["scores"]
+        metrics = results["metrics"]
+ 
+        # Custom score: heavily weight lap completion and speed
+        score = (
+            scores["completion_score"] * 2.0 +
+            scores["speed_score"] * 1.0 +
+            scores["line_keeping_score"] * 0.5 +
+            scores["stability_score"] * 1.0 -
+            (1.0 if metrics["fall"] else 0.0) * 3.0 -
+            (1.0 if metrics["boundary_violation"] else 0.0) * 2.0
+        )
+        return float(score)
+    except Exception as e:
+        print(f"  [eval error] {e}")
+        return -10.0
+ 
+ 
+def main() -> None:
+    args = parse_args()
+    rng = np.random.default_rng(args.seed)
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+ 
+    n_params = _param_count()
+    n_elite = max(1, int(args.population * args.elite_frac))
+    sigma = args.sigma_init
+ 
+    # Initialize mean from random policy
+    mean = MLPPolicy.random_init(HIDDEN_SIZE, seed=args.seed).get_flat_params()
+    best_score = -999.0
+    best_params = mean.copy()
+    history = []
+ 
+    print(f"CEM MLP training: {n_params} params, pop={args.population}, "
+          f"elite={n_elite}, iters={args.iterations}")
+ 
+    for iteration in range(args.iterations):
+        # Sample population
+        noise = rng.normal(0, sigma, (args.population, n_params))
+        population = mean[None, :] + noise
+        population[0] = mean  # always include current mean
+ 
+        scores = []
+        for i, params in enumerate(population):
+            cand_dir = output_dir / f"iter_{iteration:03d}_cand_{i:02d}"
+            cand_dir.mkdir(parents=True, exist_ok=True)
+            weights_path = cand_dir / "mlp_weights.npz"
+ 
+            score = _eval_params(
+                params,
+                checkpoint_dir=args.checkpoint_dir,
+                config=args.config,
+                output_dir=cand_dir,
+                weights_path=weights_path,
+                eval_seconds=args.eval_seconds,
+                entry_name=args.entry_name,
+            )
+            scores.append(score)
+            print(f"iter={iteration:03d} cand={i:02d} score={score:.3f} "
+                  f"best={max(best_score, max(scores)):.3f}", flush=True)
+ 
+            if score > best_score:
+                best_score = score
+                best_params = params.copy()
+                # Save best weights to top-level
+                best_mlp = MLPPolicy.from_flat_params(best_params, HIDDEN_SIZE)
+                best_mlp.save(output_dir / "best_mlp_weights.npz")
+                _write_planner_config(output_dir,
+                                      output_dir / "best_mlp_weights.npz")
+                print(f"  *** new best: {best_score:.3f} ***")
+ 
+        # Elite update
+        scores_arr = np.array(scores)
+        elite_idx = np.argsort(scores_arr)[-n_elite:]
+        elite_params = population[elite_idx]
+        mean = elite_params.mean(axis=0)
+ 
+        sigma = max(args.sigma_min, sigma * args.sigma_decay)
+ 
+        record = {
+            "iteration": iteration,
+            "best_score": float(best_score),
+            "sigma": float(sigma),
+            "scores": [float(s) for s in scores],
+        }
+        history.append(record)
+        (output_dir / "history.json").write_text(json.dumps(history, indent=2))
+        print(f"--- iter {iteration} done | sigma={sigma:.3f} | "
+              f"elite_mean={scores_arr[elite_idx].mean():.3f} ---\n")
+ 
+    print(f"\nTraining done. Best score: {best_score:.3f}")
+    print(f"Best weights: {output_dir / 'best_mlp_weights.npz'}")
+    print(f"Planner config: {output_dir / 'planner_config.json'}")
+ 
+ 
+if __name__ == "__main__":
+    main()
