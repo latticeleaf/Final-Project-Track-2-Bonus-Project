@@ -1,10 +1,10 @@
 {
   "planner_type": "starter_pd",
-  "speed_mps": 0.45,
-  "min_speed_mps": 0.12,
+  "speed_mps": 1.5,
+  "min_speed_mps": 0.6,
   "max_lateral_speed_mps": 0.08,
-  "max_yaw_rate_radps": 0.25,
-  "k_heading": 0.55,
+  "max_yaw_rate_radps": 0.75,
+  "k_heading": 1.2,
   "k_lateral": 0.08,
   "heading_slowdown": 0.45,
   "stand_seconds": 1.0
