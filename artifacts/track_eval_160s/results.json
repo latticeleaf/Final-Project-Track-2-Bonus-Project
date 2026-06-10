@@ -1,0 +1,42 @@
+{
+  "challenge": "track_bonus",
+  "entry_name": "Julia",
+  "checkpoint_dir": "/content/hw1_repo/artifacts/run_baseline/best_checkpoint",
+  "planner_config": "/content/go2_track_bonus_repo/artifacts/highlevel_mlp_v2/planner_config.json",
+  "official_track": {
+    "track_length_m": 200.0,
+    "turn_radius_m": 18.25,
+    "half_width_m": 2.0
+  },
+  "metrics": {
+    "lap_completion": 1.0,
+    "valid_distance_m": 200.0,
+    "finish_time": 160.0,
+    "mean_progress_speed": 1.25,
+    "alive_time": 160.0,
+    "fall": false,
+    "fall_step": null,
+    "boundary_violation": false,
+    "boundary_violation_step": null,
+    "rms_lateral_error": 1.0618354918983204,
+    "max_lateral_error": 1.645008607176471,
+    "min_boundary_margin_m": 0.3549913928235291,
+    "energy_proxy": 11.706207275390625,
+    "foot_slip_proxy": 1.2556216716766357,
+    "total_time": 200.0,
+    "num_steps": 10000
+  },
+  "scores": {
+    "completion_score": 1.0,
+    "speed_score": 1.0,
+    "line_keeping_score": 0.3172623603700835,
+    "stability_score": 1.0,
+    "efficiency_score": 0.5398993414801521,
+    "composite_score": 0.8404474391480243
+  },
+  "artifacts": {
+    "leaderboard_csv": "/content/go2_track_bonus_repo/artifacts/track_eval_160s/leaderboard.csv",
+    "rollouts_npz": "/content/go2_track_bonus_repo/artifacts/track_eval_160s/race_rollouts.npz",
+    "video_path": null
+  }
+}
