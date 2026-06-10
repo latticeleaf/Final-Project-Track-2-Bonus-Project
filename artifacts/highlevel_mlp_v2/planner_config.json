@@ -8,6 +8,6 @@
   "k_lateral": 0.08,
   "heading_slowdown": 0.45,
   "stand_seconds": 1.0,
-  "weights_path": "/content/go2_track_bonus_repo/artifacts/highlevel_mlp_v2/best_mlp_weights.npz",
+  "weights_path": "artifacts/highlevel_mlp_v2/best_mlp_weights.npz",
   "hidden_size": 32
 }

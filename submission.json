@@ -1,0 +1,11 @@
+{
+  "team_name": "Julia",
+  "track2_option": "leaderboard",
+  "checkpoint_dir": "best_checkpoint",
+  "planner_config": "planner_config.json",
+  "planner_code": "track_bonus/planner.py",
+  "planner_weights": "artifacts/highlevel_mlp_v2/best_mlp_weights.npz",
+  "high_level_planner_type": "learned",
+  "track_eval": "track_eval/results.json",
+  "notes": "Low-Level: Reused HW1 Brax PPO checkpoint. High-Level: MLP (5\u219232\u219232\u21923, tanh) trained in two phases: (1) supervised behavioral cloning on PD planner demonstrations, (2) CEM optimization using composite_score directly, population=16, eval=45s, ~4 iterations. Final weights (v2) achieved 172.86s. Speed limits then tuned manually in config (speed_mps=1.7, min_speed_mps=0.7, max_yaw_rate_radps=0.75) without retraining, improving to 160.0s lap completion, no falls, no boundary violations, composite_score=0.840. Failed ideas: (1) MLP v1 used custom score formula, boundary violation at 60% lap (score=0.334); (2) Further CEM training warm-started from v2 with higher sigma and speed simultaneously diverged \u2014 root cause unclear as both were changed at once."
+}
