@@ -1,0 +1,13 @@
+{
+  "planner_type": "mlp",
+  "speed_mps": 1.5,
+  "min_speed_mps": 0.6,
+  "max_lateral_speed_mps": 0.08,
+  "max_yaw_rate_radps": 0.65,
+  "k_heading": 1.2,
+  "k_lateral": 0.08,
+  "heading_slowdown": 0.45,
+  "stand_seconds": 1.0,
+  "weights_path": "/content/go2_track_bonus_repo/artifacts/highlevel_mlp_v2/best_mlp_weights.npz",
+  "hidden_size": 32
+}
